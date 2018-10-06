@@ -1,0 +1,312 @@
+void initConn(java.sql.Connection):
+	::START TRANSACTION READ WRITE;
+	If entry 'sys_var.sys_init' is not with value 'true'(including table not exists, entry not exists):
+		If table 'sys_var' not exists, create one: sys_var(Text var_key not null, Text var_value default null).
+		If entry 'sys_var.sys_init' not exists, insert one with 'false'.
+		Create table if not exists: 
+				heap(key Int64 addr, Enum{DATA, STRUCT}/Text type, Int64 ref default 1, Enum{UNLOCKED, READ_LOCK, WRITE_LOCK}/Text lock default UNLOCKED), // TODO
+				struct(key Int64 addr, key Text field, Int64 targ),
+				data(key Int64 addr, Text data_type,::BLOB:: data),
+				conn(Text/Int128/UUID cluster_id, Int32 conn_id),
+				conn_ref(key Text/Int128/UUID cluster_id, key Int64 addr, Int32 ref),
+				conn_lock(Int64 addr, Int64 lock_id, Text/Int128/UUID cluster_id).
+		Create database only procedure if not exists hook to startup:
+				gc:
+					Start count.
+					For each entry in 'heap' that ref <= 0:
+						// Here's no need to make an atomic transaction cuz here's nothing can access objects with no refs.
+						Get 'type' and 'addr' of the entry.
+						If type is DATA: 
+							Remove entry in table 'data' with addr 'addr'.
+						If type is STRUCT:
+							For each entry in 'table' with addr 'addr':
+								Decrement 'ref' of entry with addr 'addr' in table 'heap'.
+								Remove this entry.
+						Count.
+					Start timing for next execute gc: 60min * sqrt(16/count).
+		Create database only procedure if not exists hook to logoff of connection: 
+				on_connection_close:
+					Get 'cluster_id' in table 'conn' with conn_id MySQL Connection ID.
+					Remove this entry.
+					If no entry in table 'conn' with cluster_id 'cluster_id':
+						For each entry in conn_ref with cluster_id 'cluster_id': 
+							Get 'addr', 'ref' of the entry.
+							::START TRANSACTION READ WRITE; // Not necessary if contained operations are atomic.
+							Decrement ref by 'ref' for entry with addr 'addr' in table 'heap'.
+							::COMMIT;
+					// Remove locks TODO
+		Create database only global variable 'startup' if not exists with boolean value default false.
+		Set entry 'sys_var.sys_init' to 'true'.
+	::COMMIT;
+
+	::START TRANSACTION READ WRITE;
+	If database only global variable 'startup' is false:
+		For each entry in connref:
+			Get 'addr', 'ref' of the entry.
+			Decrement ref by 'ref' for entry with addr 'addr' in table 'heap'.
+		Remove all entries in table 'conn'.
+		Set database only global variable 'startup' to true.
+	::COMMIT;
+
+	::START TRANSACTION READ WRITE;
+	Add an entry (?connectionId.toString()?, MySQL Connection ID) to table conn.
+	::COMMIT;
+
+
+//MyRemoteObject::retrieve(CallbackArg1, CallbackArg1): 
+	Get 'type' with addr ?address? in table 'heap'.
+	If type is STRUCT:
+		
+	If type is DATA:
+		::SELECT:: (data_type, data) of entry with addr in table 'data'.
+
+MyLockStatement::lock(...), 
+	::START TRANSACTION READ WRITE;
+	Get 'lock' with addr ?address? in table 'heap';
+	If lock is not UNLOCKED:
+		::SELECT:: -1.
+	Else if lock is WRITE_LOCK or ?lockType? is WRITE_LOCK:
+		::SELECT:: -1;
+	Else:
+		Generate positive random number that is unique as 'lock_id' in table 'conn_lock' for addr ?address?. 
+		// Meaning different addr and same lock_id is considered unique.
+		Get 'cluster_id' from table conn with MySQL Connection ID.
+		Add entry (?address?, lock_id, cluster_id) into table conn_lock.
+		Set 'lock' of entry with addr ?address? to ?lockType?.
+		::SELECT:: lock_id.
+	::COMMIT;
+
+MyLockStatement::unlock(...):
+
+
+MyRemoteObject::finalize():
+	Get 'cluster_id' from table 'conn' by MySQL Connection ID.
+	If cluster_id exists: 
+		::START TRANSACTION READ WRITE;
+		Decrement 'ref' of entry with cluster_id 'cluster_id' and addr ?address? in table 'conn_ref'.
+		Decrement 'ref' of entry with addr ?address? in table 'heap'.
+		::COMMIT;
+
+MyRemoteDataObject::size(CallbackArg1, CallbackArg1):
+	::SELECT:: byte size of 'data' with addr ?address? in table 'data'.
+
+MyRemoteDataObject::retrieve(CallbackArg1, CallbackArg1):
+	::SELECT:: (data_type, data) of entry with ?address? in table 'data'.
+
+MyRemoteStructObject::retrieve(CallbackArg1, CallbackArg1):
+	::START TRANSACTION READ ONLY;
+	::SELECT:: (field, targ) of all entries with addr in table 'struct', corresponding 'type' of entry with addr 'targ' in table 'heap'.
+	::COMMIT;
+
+
+// Remote reference management is not added! TODO
+// Type return should be added! TODO
+MyRemoteStructObject::get(FieldPath, CallbackArg1, CallbackArg1):
+	>> Replicate while pathIterator.hasNext().
+	::START TRANSACTION READ ONLY;
+	Get 'targ' of the entry with ?pathIterator.next()? and ?address? in table struct.
+	If targ exists 
+		>> Has next:
+			Set address to targ
+			::COMMIT;
+			>> Replicate.
+		>> Has no next:
+			::SELECT:: targ
+			::COMMIT;
+	Else
+		::SELECT:: -1.
+		::COMMIT;
+
+Format MyRemoteStructObject::get(FieldPath[], CallbackArg1, CallbackArg1) multiselect+ FieldPath to FieldPath[] :
+	>> Replicate for each path in pathes.
+	::START TRANSACTION READ ONLY;
+	Get 'targ' of the entry with ?pathIterator.next()? and ?address? in table struct.
+	If targ exists 
+		>> Has next:
+			Set address to targ
+			::COMMIT;
+			>> Replicate.
+		>> Has no next:
+			::SELECT:: (Previous selected, targ)
+			::COMMIT;
+	Else
+		::SELECT:: (Previous selected, -1).
+		::COMMIT;
+	>> Replicate.
+
+// Yo im fast as fuck boii
+
+multiselect+ MyRemoteStructObject::set(FieldPath, OosObject, CallbackArg0, CallbackArg1)::OosObject is instance of RemoteObject:
+	>> Replicate while pathIterator.hasNext().
+	::START TRANSACTION READ ONLY;
+	Get 'targ' of the entry with ?fieldname=pathIterator.next()? and ?address? in table struct.
+	If targ exists 
+		>> Has next:
+			Set address to targ.
+			::COMMIT;
+			>> Replicate.
+		>> Has no next:
+			Decrement ref of entry with targ as addr.
+			Insert an entry (?address?, ?fieldname?, ?target?) to table struct.
+			::COMMIT;
+	Else
+		::COMMIT;
+		>> Replication start
+		::START TRANSACTION READ WRITE;
+		Get 'targ' of the entry with ?fieldname? and ?address? in table struct.
+		If targ exists: 
+			Set address to targ.
+			::COMMIT;
+			>> Replicate。
+		>> Has next:
+			// Create a struct objectas reference template
+			Insert an entry with a unique addr and type is STRUCT to table heap.
+			Insert an entry (?address?, ?fieldname?, addr) to table struct.
+			Set address to addr.
+			::COMMIT;
+			>> Replicate。
+		>> Has no next:
+			Insert an entry (?address?, ?fieldname?, ?target?) to table struct.
+			::COMMIT;
+
+multiselect+ MyRemoteStructObject::set(FieldPath, OosObject, CallbackArg0, CallbackArg1)::OosObject is instance of LocalObject:
+	>> Replicate while pathIterator.hasNext().
+	>> Has next: ::START TRANSACTION READ ONLY;
+	>> Has no next: :: START TRANSACTION READ WRITE;
+	Get 'targ' of the entry with ?fieldname=pathIterator.next()? and ?address? in table struct.
+	If targ exists 
+		>> Has next:
+			Set address to targ.
+			::COMMIT;
+			>> Replicate.
+		>> Has no next:
+			Decrement ref of entry with targ as addr in table heap.
+			If is data object:
+				Insert an entry with a unique addr and type is DATA to table heap.
+				Insert an entry (addr, ?obj.getTypeIdentifier()?, ?obj.getBytes()?) to table data.
+				Insert an entry (targ, ?fieldname?, addr) to table struct
+			If is struct object:
+				Create a strcut object
+				Create each object if it is local object inside the object.
+				For remote object in local struct object, create the struct object first and refer to the remote object, increment its ref.
+				Let the object refer to this object with given field name.
+			::COMMIT;
+	Else
+		::COMMIT;
+		>> Replication start
+		::START TRANSACTION READ WRITE;
+		Get 'targ' of the entry with ?fieldname? and ?address? in table struct.
+		If targ exists: 
+			Set address to targ.
+			::COMMIT;
+			>> Replicate.
+		>> Has next:
+			// Create a struct objectas reference template
+			Insert an entry with a unique addr and type is STRUCT to table heap.
+			Insert an entry (?address?, ?fieldname?, addr) to table struct.
+			Set address to addr.
+			::COMMIT;
+			>> Replicate
+		>> Has no next:
+			If is data object:
+				// Create a struct object as reference template
+				Insert an entry with a unique addr and type is DATA to table heap.
+				Insert an entry (addr, ?obj.getTypeIdentifier()?, ?obj.getBytes()?) to table data.
+				Insert an entry (?address?, ?fieldname?, addr) to table struct.
+			If is struct object:
+				Create a strcut object
+				Create each object if it is local object inside the object.
+				For remote object in local struct object, create the struct object first and refer to the remote object, increment its ref.
+				Let the object refer to this object with given field name.
+			::COMMIT;
+
+
+		
+
+
+
+
+
+multiselect+ MyRemoteStructObject::set(FieldPath, OosObject, CallbackArg1, CallbackArg1)::OosObject is instance of RemoteObject:
+	Do whatever in MyRemoteStructObject::set(FieldPath, OosObject, CallbackArg0, CallbackArg1)::OosObject is instance of RemoteObject, 
+	but ::SELECT:: targ after has no next and targ exists, and select -1 at else of the results.
+
+multiselect+ MyRemoteStructObject::set(FieldPath, OosObject, CallbackArg1, CallbackArg1)::OosObject is instance of LocalObject:
+	Do whatever in MyRemoteStructObject::set(FieldPath, OosObject, CallbackArg0, CallbackArg1)::OosObject is instance of LocalObject, 
+	but ::SELECT:: targ after has no next and targ exists, and select -1 at else of the results.
+
+
+
+multiselect+ MyRemoteStructObject::remove(FieldPath, CallbackArg0, CallbackArg1):
+	>> Replicate while pathIterator.hasNext().
+	>> Has next: ::START TRANSACTION READ ONLY;
+	>> Has no next: :: START TRANSACTION READ WRITE;
+	Get 'targ' of the entry with ?fieldname=pathIterator.next()? and ?address? in table struct.
+	If targ exists 
+		>> Has next:
+			Set address to targ
+			::COMMIT;
+			>> Replicate.
+		>> Has no next:
+			Decrement ref of entry with targ as addr in table heap.
+			Remove the entry with ?fieldname? and ?address? in table struct.
+			::COMMIT;
+	Else
+		::SELECT:: -1.
+		::COMMIT;
+
+
+multiselect+ MyRemoteStructObject::remove(FieldPath, CallbackArg1, CallbackArg1):
+	>> Replicate while pathIterator.hasNext().
+	>> Has next: ::START TRANSACTION READ ONLY;
+	>> Has no next: :: START TRANSACTION READ WRITE;
+	Get 'targ' of the entry with ?fieldname=pathIterator.next()? and ?address? in table struct.
+	If targ exists 
+		>> Has next:
+			Set address to targ
+			::COMMIT;
+			>> Replicate.
+		>> Has no next:
+			Decrement ref of entry with targ as addr in table heap.
+			Remove the entry with ?fieldname? and ?address? in table struct.
+			::SELECT:: targ
+			::COMMIT;
+	Else
+		::SELECT:: -1.
+		::COMMIT;
+
+multiselect+:hasFields MyRemoteStructObject::hasField(FieldPath, CallbackArg1, CallbackArg1):
+	>> Replicate while pathIterator.hasNext().
+	::START TRANSACTION READ ONLY;
+	Get 'targ' of the entry with ?pathIterator.next()? and ?address? in table struct.
+	If targ exists 
+		>> Has next:
+			Set address to targ
+			::COMMIT;
+			>> Replicate.
+		>> Has no next:
+			::SELECT:: true.
+			::COMMIT;
+	Else
+		::SELECT:: false.
+		::COMMIT;
+
+multiselect+ MyRemoteStructObject::retrieve(FieldPath, CallbackArg1, CallbackArg1):
+	>> Replicate while pathIterator.hasNext().
+	::START TRANSACTION READ ONLY;
+	Get 'targ' of the entry with ?pathIterator.next()? and ?address? in table struct.
+	If targ exists 
+		>> Has next:
+			Set address to targ
+			::COMMIT;
+			>> Replicate.
+		>> Has no next:
+			Get 'type' with addr ?address? in table 'heap'.
+			If type is STRUCT:
+				::SELECT:: (field, targ) of all entries with targ as addr in table 'struct', corresponding 'type' of entry with addr 'targ' in table 'heap'.
+			If type is DATA:
+				::SELECT:: (data_type, data) of entry with targ as addr in table 'data'.
+			::COMMIT;
+	Else
+		::SELECT:: null.
+		::COMMIT;
