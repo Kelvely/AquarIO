@@ -74,9 +74,7 @@ class Connection implements ConnectionManager {
             schedulerSet.interfaceScheduler.schedule(callback::onCallback);
             return;
         }
-        schedulerSet.internalScheduler.schedule(() -> {
-            createSubConn(amount, callback, exHandle, schedulerSet.internalScheduler);
-        });
+        schedulerSet.internalScheduler.schedule(() -> createSubConn(amount, callback, exHandle, schedulerSet.internalScheduler));
     }
 
     void createSubConn(int amount, CallbackArg0 callback, CallbackArg1<? super Exception> exHandle, Scheduler outputScheduler) {
@@ -103,7 +101,7 @@ class Connection implements ConnectionManager {
     }
 
     private void initConn(java.sql.Connection conn) throws SQLException {
-         // TODO
+         conn.createStatement().executeUpdate(""); // TODO
     }
 
 
@@ -115,9 +113,7 @@ class Connection implements ConnectionManager {
             schedulerSet.interfaceScheduler.schedule(callback::onCallback);
             return;
         }
-        schedulerSet.internalScheduler.schedule(() -> {
-            closeSubConn(amount, callback, exHandle, schedulerSet.interfaceScheduler);
-        });
+        schedulerSet.internalScheduler.schedule(() -> closeSubConn(amount, callback, exHandle, schedulerSet.interfaceScheduler));
     }
 
     private void closeSubConn(int amount, CallbackArg0 callback, CallbackArg1<? super Exception> exHandle, Scheduler outputScheduler) {

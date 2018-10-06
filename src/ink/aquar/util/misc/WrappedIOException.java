@@ -1,4 +1,4 @@
-package ink.aquar.util.storage;
+package ink.aquar.util.misc;
 
 import java.io.IOException;
 
