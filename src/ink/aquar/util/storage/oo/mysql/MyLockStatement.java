@@ -7,9 +7,9 @@ import ink.aquar.util.storage.oo.LockStatement;
 import ink.aquar.util.storage.oo.LockType;
 import ink.aquar.util.storage.oo.RemoteObject;
 
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -54,10 +54,11 @@ class MyLockStatement implements LockStatement {
 
     boolean tryLock() throws SQLException {
         synchronized (this) {
-            Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery(""); // TODO Help me!
+            PreparedStatement statement = connection.prepareStatement(MySQLStatements.TRY_LOCK);
+            // TODO Add arguments
+            ResultSet resultSet = statement.executeQuery();
             resultSet.next();
-            long lockId = resultSet.getLong(1); // TODO need review, whether it should be 0 or 1.
+            long lockId = resultSet.getLong(1);
             if (lockId >= 0) {
                 this.lockId.set(lockId);
                 return true;
@@ -74,8 +75,9 @@ class MyLockStatement implements LockStatement {
                 isCanceled.set(true);
                 if(!isLocked.get()) return;
                 try {
-                    Statement statement = connection.createStatement();
-                    statement.executeUpdate(""); // TODO Help me!
+                    PreparedStatement statement = connection.prepareStatement(MySQLStatements.UNLOCK);
+                    // TODO Add arguments
+                    statement.executeUpdate();
                     schedulerSet.interfaceScheduler.schedule(() -> {
                         synchronized (isLocked) {
                             isLocked.set(false);

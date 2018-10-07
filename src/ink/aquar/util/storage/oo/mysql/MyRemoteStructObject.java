@@ -8,7 +8,6 @@ import ink.aquar.util.storage.oo.*;
 
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,8 +24,9 @@ class MyRemoteStructObject extends MyRemoteObject implements RemoteStructObject 
     public void retrieve(CallbackArg1<LocalObject> callback, CallbackArg1<? super Exception> exHandle) {
         schedulerSet.internalScheduler.schedule(() -> {
             try {
-                Statement statement = connection.createStatement();
-                ResultSet resultSet = statement.executeQuery(""); // TODO Help me!
+                PreparedStatement statement = connection.prepareStatement(MySQLStatements.RETRIEVE_STRUCT);
+                // TODO Add arguments
+                ResultSet resultSet = statement.executeQuery();
                 LocalStructObject obj = LocalStructObject.create();
                 while(resultSet.next()) {
                     String fieldName = resultSet.getString(1);

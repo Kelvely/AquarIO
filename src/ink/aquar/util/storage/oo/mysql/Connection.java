@@ -3,14 +3,12 @@ package ink.aquar.util.storage.oo.mysql;
 import ink.aquar.util.concurrent.callback.CallbackArg0;
 import ink.aquar.util.concurrent.callback.CallbackArg1;
 import ink.aquar.util.misc.SchedulerSet;
+import ink.aquar.util.misc.UUIDSerializer;
 import ink.aquar.util.schedule.Scheduler;
 import ink.aquar.util.storage.oo.RemoteStructObject;
 import ink.aquar.util.storage.oo.conncluster.ConnectionManager;
 
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
-import java.sql.Statement;
+import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -101,7 +99,11 @@ class Connection implements ConnectionManager {
     }
 
     private void initConn(java.sql.Connection conn) throws SQLException {
-         conn.createStatement().executeUpdate(""); // TODO
+        PreparedStatement statement = conn.prepareStatement(MySQLStatements.INIT_CONN);
+        byte[] connIdBytes = new byte[16];
+        UUIDSerializer.SERIALIZER.serialize(connectionId).duplicate().get(connIdBytes);
+        statement.setBytes(1, connIdBytes);
+        statement.executeUpdate();
     }
 
 

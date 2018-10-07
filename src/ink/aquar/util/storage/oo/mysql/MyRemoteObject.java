@@ -7,6 +7,8 @@ import ink.aquar.util.storage.oo.LockStatement;
 import ink.aquar.util.storage.oo.LockType;
 import ink.aquar.util.storage.oo.RemoteObject;
 
+import java.sql.PreparedStatement;
+
 abstract class MyRemoteObject implements RemoteObject {
 
     protected final Connection connection;
@@ -49,7 +51,15 @@ abstract class MyRemoteObject implements RemoteObject {
 
     @Override
     protected void finalize() throws Throwable {
-        // Remove reference, notice situation if removing reference is after connection close TODO
+        schedulerSet.internalScheduler.schedule(() -> {
+            try {
+                PreparedStatement statement = connection.prepareStatement(MySQLStatements.FINALIZE);
+                statement.setLong(1, address);
+                // TODO Add arguments
+                statement.executeUpdate();
+            } catch (Exception ex) { /* IGNORE */}
+        });
+        // Remove reference, notice situation if removing reference is after connection close
         super.finalize();
     }
 }
