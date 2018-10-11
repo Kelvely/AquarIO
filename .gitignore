@@ -1,4 +1,3 @@
-.gitignore
 
 AquarIO.iml
-.idea
+.idea/**

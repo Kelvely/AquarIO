@@ -1,0 +1,1 @@
+SELECT data_type, content FROM obj_data WHERE addr IN (|::::<address>::,::|);
